@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Video Agent — Network & Security Template</title>
+<style>
+  :root{
+    --bg:#0a0e17; --panel:#0f1420; --line:#1c2636;
+    --cyan:#00e5ff; --green:#39ff88; --text:#e8f6ff; --muted:#7a8aa3;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:'Segoe UI', Tahoma, sans-serif; line-height:1.6;
+  }
+  header{
+    padding:32px 24px 16px; max-width:920px; margin:0 auto;
+  }
+  header h1{
+    font-size:22px; margin:0 0 4px; letter-spacing:.3px;
+  }
+  header p{ color:var(--muted); margin:0; font-size:14px }
+  .mono{ font-family:'Consolas','DejaVu Sans Mono',monospace }
+
+  main{ max-width:920px; margin:0 auto; padding:0 24px 60px; }
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:6px;
+    padding:20px; margin-top:18px;
+  }
+  .panel h2{ font-size:14px; color:var(--cyan); margin:0 0 14px; font-weight:600; }
+
+  .dropzone{
+    border:1px dashed var(--line); border-radius:6px; padding:28px;
+    text-align:center; cursor:pointer; transition:border-color .15s;
+  }
+  .dropzone:hover{ border-color:var(--cyan); }
+  .dropzone span{ color:var(--muted); font-size:13px; }
+
+  .item-row{
+    display:flex; align-items:center; gap:12px; padding:10px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .item-row:last-child{ border-bottom:none; }
+  .item-row .thumb{
+    width:56px; height:36px; background:#000; border-radius:3px;
+    flex-shrink:0; object-fit:cover; border:1px solid var(--line);
+  }
+  .item-row input[type=text]{ flex:1; min-width:0; }
+  .item-row .dur{ width:60px; }
+  .item-row button{ flex-shrink:0; }
+
+  input[type=text], input[type=number], select{
+    background:#000; border:1px solid var(--line); color:var(--text);
+    padding:8px 10px; border-radius:4px; font-size:13px; font-family:inherit;
+  }
+  input:focus, select:focus{ outline:none; border-color:var(--cyan); }
+
+  .row{ display:flex; gap:12px; flex-wrap:wrap; }
+  .row > div{ flex:1; min-width:160px; }
+  label{ display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
+
+  button.primary{
+    background:var(--cyan); color:#001019; border:none; font-weight:700;
+    padding:12px 22px; border-radius:4px; cursor:pointer; font-size:14px;
+  }
+  button.primary:disabled{ background:#294452; color:#5b7280; cursor:not-allowed; }
+  button.ghost{
+    background:transparent; border:1px solid var(--line); color:var(--muted);
+    padding:6px 10px; border-radius:4px; cursor:pointer; font-size:12px;
+  }
+  button.ghost:hover{ border-color:var(--cyan); color:var(--cyan); }
+
+  #status{ margin-top:16px; font-size:13px; color:var(--muted); }
+  #status.done{ color:var(--green); }
+  #status.error{ color:#ff3860; }
+
+  video#preview{ width:100%; border-radius:6px; margin-top:14px; display:none; }
+
+  .embed-box{
+    background:#000; border:1px solid var(--line); border-radius:4px;
+    padding:12px; font-size:12px; color:var(--green); overflow-x:auto;
+    display:none; margin-top:12px; white-space:pre;
+  }
+
+  footer{ text-align:center; color:var(--muted); font-size:12px; padding:20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 class="mono">VIDEO_AGENT <span style="color:var(--cyan)">// security template</span></h1>
+  <p>عکس، ویدیو و متن رو بچین، خروجی حرفه‌ای بگیر، هرجا خواستی embed کن.</p>
+</header>
+
+<main>
+  <div class="panel">
+    <h2 class="mono">01 // MEDIA</h2>
+    <div class="dropzone" id="dropzone">
+      <span>فایل‌ها رو اینجا بکش یا کلیک کن (عکس / ویدیو)</span>
+      <input type="file" id="fileInput" multiple accept="image/*,video/*" style="display:none" />
+    </div>
+    <div id="itemsList" style="margin-top:14px"></div>
+    <button class="ghost" id="addAiStep" style="margin-top:10px">+ بخش AI-ساخته اضافه کن</button>
+  </div>
+
+  <div class="panel">
+    <h2 class="mono">02 // TEMPLATE</h2>
+    <div class="row">
+      <div>
+        <label>عنوان پروژه</label>
+        <input type="text" id="projectTitle" value="SECURITY BRIEF" />
+      </div>
+      <div>
+        <label>زیرعنوان</label>
+        <input type="text" id="subtitle" value="SECURE // ANALYZE // DEFEND" />
+      </div>
+      <div>
+        <label>نسبت تصویر</label>
+        <select id="aspect">
+          <option value="16:9">۱۶:۹ (وب/یوتیوب)</option>
+          <option value="9:16">۹:۱۶ (استوری/ریلز)</option>
+          <option value="1:1">۱:۱ (اسکوئر)</option>
+        </select>
+      </div>
+      <div>
+        <label>متن پایانی (CTA)</label>
+        <input type="text" id="cta" value="www.yourproject.com" />
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2 class="mono">03 // RENDER</h2>
+    <button class="primary" id="renderBtn">ساخت ویدیو</button>
+    <div id="status"></div>
+    <video id="preview" controls></video>
+    <div class="embed-box" id="embedBox"></div>
+  </div>
+</main>
+
+<footer class="mono">POST /api/render · GET /embed/:jobId</footer>
+
+<script>
+const API = ""; // same-origin; set to your server URL when embedding remotely
+let items = []; // {file, type, text, duration}
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+const itemsList = document.getElementById("itemsList");
+
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("dragover", e => { e.preventDefault(); dropzone.style.borderColor = "var(--cyan)"; });
+dropzone.addEventListener("dragleave", () => dropzone.style.borderColor = "");
+dropzone.addEventListener("drop", e => {
+  e.preventDefault();
+  dropzone.style.borderColor = "";
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener("change", () => handleFiles(fileInput.files));
+
+function handleFiles(fileList) {
+  for (const file of fileList) {
+    const type = file.type.startsWith("video") ? "video" : "image";
+    items.push({ file, type, text: "", duration: type === "image" ? 4 : null });
+  }
+  renderItemsList();
+}
+
+function renderItemsList() {
+  itemsList.innerHTML = "";
+  items.forEach((item, i) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    const label = item.kind === "ai" ? "🤖 AI" : (item.type === "video" ? "🎬" : "🖼");
+    row.innerHTML = `
+      <span class="mono" style="width:24px">${label}</span>
+      <input type="text" placeholder="${item.kind === 'ai' ? 'پرامپت AI...' : 'متن روی این بخش (اختیاری)'}" value="${item.text}" data-field="text" />
+      <input type="text" class="dur" placeholder="ثانیه" value="${item.duration || ''}" data-field="duration" />
+      <button class="ghost" data-action="remove">حذف</button>
+    `;
+    row.querySelector('[data-field="text"]').addEventListener("input", e => {
+      items[i][item.kind === "ai" ? "aiPrompt" : "text"] = e.target.value;
+    });
+    row.querySelector('[data-field="duration"]').addEventListener("input", e => {
+      items[i].duration = e.target.value ? Number(e.target.value) : null;
+    });
+    row.querySelector('[data-action="remove"]').addEventListener("click", () => {
+      items.splice(i, 1);
+      renderItemsList();
+    });
+    itemsList.appendChild(row);
+  });
+}
+
+document.getElementById("addAiStep").addEventListener("click", () => {
+  items.push({ kind: "ai", type: "ai", aiPrompt: "", text: "", duration: 3 });
+  renderItemsList();
+});
+
+document.getElementById("renderBtn").addEventListener("click", async () => {
+  if (items.length === 0) { alert("حداقل یه فایل یا بخش AI اضافه کن."); return; }
+
+  const btn = document.getElementById("renderBtn");
+  const statusEl = document.getElementById("status");
+  btn.disabled = true;
+  statusEl.className = "";
+  statusEl.textContent = "در حال آپلود و رندر...";
+
+  const form = new FormData();
+  const timeline = [];
+  let fileIndex = 0;
+
+  items.forEach(item => {
+    if (item.kind === "ai") {
+      timeline.push({ type: "ai", aiPrompt: item.aiPrompt, text: item.text, duration: item.duration });
+    } else {
+      form.append("files", item.file);
+      timeline.push({ type: item.type, fileIndex: fileIndex++, text: item.text, duration: item.duration });
+    }
+  });
+
+  form.append("timeline", JSON.stringify(timeline));
+  form.append("options", JSON.stringify({
+    aspect: document.getElementById("aspect").value,
+    projectTitle: document.getElementById("projectTitle").value,
+    subtitle: document.getElementById("subtitle").value,
+    cta: document.getElementById("cta").value
+  }));
+
+  try {
+    const res = await fetch(`${API}/api/render`, { method: "POST", body: form });
+    const { jobId, error } = await res.json();
+    if (error) throw new Error(error);
+    poll(jobId);
+  } catch (err) {
+    statusEl.className = "error";
+    statusEl.textContent = "خطا: " + err.message;
+    btn.disabled = false;
+  }
+});
+
+async function poll(jobId) {
+  const statusEl = document.getElementById("status");
+  const btn = document.getElementById("renderBtn");
+  const preview = document.getElementById("preview");
+  const embedBox = document.getElementById("embedBox");
+
+  const interval = setInterval(async () => {
+    const res = await fetch(`${API}/api/status/${jobId}`);
+    const job = await res.json();
+    if (job.status === "processing") {
+      statusEl.textContent = "در حال رندر... (بسته به تعداد فایل‌ها ممکنه چند دقیقه طول بکشه)";
+    } else if (job.status === "done") {
+      clearInterval(interval);
+      statusEl.className = "done";
+      statusEl.textContent = "✓ ویدیو آماده‌ست.";
+      preview.src = `${API}/api/download/${jobId}`;
+      preview.style.display = "block";
+      embedBox.style.display = "block";
+      embedBox.textContent = `<iframe src="${location.origin}/embed/${jobId}" width="640" height="360" frameborder="0" allowfullscreen></iframe>`;
+      btn.disabled = false;
+    } else if (job.status === "error") {
+      clearInterval(interval);
+      statusEl.className = "error";
+      statusEl.textContent = "خطا در رندر: " + job.error;
+      btn.disabled = false;
+    }
+  }, 2000);
+}
+</script>
+
+</body>
+</html>
