@@ -45,7 +45,7 @@ function renderPlaceholder(prompt, workDir) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(workDir, { recursive: true });
     const out = path.join(workDir, `ai_${Date.now()}.mp4`);
-    const font = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf";
+    const font = "C:/Windows/Fonts/consola.ttf";
     const text = (prompt || "AI SEGMENT").replace(/'/g, "\u2019").replace(/:/g, "\\:");
     const p = spawn("ffmpeg", [
       "-y", "-f", "lavfi", "-i", "color=c=0x0a0e17:s=1920x1080:d=3:r=30",

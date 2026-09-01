@@ -8,8 +8,8 @@
     "text": "0xe8f6ff",
     "danger": "0xff3860"
   },
-  "font": "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-  "fontRegular": "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+  "font": "C:/Windows/Fonts/consola.ttf",
+  "fontRegular": "C:/Windows/Fonts/consolab.ttf",
   "intro": {
     "duration": 3,
     "subtitle": "SECURE // ANALYZE // DEFEND"

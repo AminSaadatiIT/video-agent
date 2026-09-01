@@ -3,9 +3,21 @@ const multer = require("multer");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+const { execSync } = require("child_process");
 const { v4: uuidv4 } = require("uuid");
 const { renderProject } = require("./renderer");
 const { generateAIClip } = require("./ai-providers");
+
+// --- Detect ffmpeg path (local ./ffmpeg/bin or system) ---
+function findFFmpeg() {
+  const localBin = path.join(__dirname, "..", "ffmpeg", "bin");
+  if (fs.existsSync(path.join(localBin, "ffmpeg.exe"))) return localBin;
+  if (fs.existsSync(path.join(localBin, "ffmpeg"))) return localBin;
+  try { execSync("ffmpeg -version", { stdio: "ignore" }); return ""; } catch {}
+  return null;
+}
+const FFMPEG_PATH = findFFmpeg();
+if (FFMPEG_PATH) process.env.PATH = FFMPEG_PATH + path.delimiter + (process.env.PATH || "");
 
 const app = express();
 app.use(cors());
@@ -96,5 +108,19 @@ app.get("/embed/:jobId", (req, res) => {
 
 app.use("/output", express.static(OUTPUT_DIR));
 
+// Health check
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", ffmpeg: !!FFMPEG_PATH, jobs: jobs.size });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Video agent running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log("");
+  console.log("╔══════════════════════════════════════════╗");
+  console.log("║        🎬 VIDEO AGENT RUNNING            ║");
+  console.log("╚══════════════════════════════════════════╝");
+  console.log("");
+  console.log(`  🌐 Open: http://localhost:${PORT}`);
+  console.log(`  🔧 ffmpeg: ${FFMPEG_PATH ? "✅ local (./ffmpeg/bin)" : "✅ system"}`);
+  console.log("");
+});

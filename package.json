@@ -4,12 +4,14 @@
   "description": "Web agent that assembles text + images + video into a professional templated video, embeddable in other sites/projects.",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "setup": "node setup.js",
+    "dev": "node src/server.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "multer": "^1.4.5-lts.1",
-    "uuid": "^9.0.1",
-    "cors": "^2.8.5"
+    "cors": "^2.8.6",
+    "express": "^4.22.2",
+    "multer": "^1.4.5-lts.2",
+    "uuid": "^9.0.1"
   }
 }
