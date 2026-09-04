@@ -636,8 +636,60 @@ async function generateAiForClip() {
   clip.aiPrompt = document.getElementById("aiPromptInput").value.trim();
   if (!clip.aiPrompt) { toast("لطفاً پرامپت وارد کنید", "error"); return; }
 
+  // Save template
+  const activeTmpl = document.querySelector('.ai-tmpl.active');
+  if (activeTmpl) clip.aiTemplate = activeTmpl.dataset.tmpl;
+
   toast("🤖 در حال ساخت کلیپ AI...", "success");
-  // The actual AI generation happens server-side during render
+
+  // Generate preview immediately via API
+  try {
+    const form = new FormData();
+    form.append('timeline', JSON.stringify([{
+      type: 'ai', aiPrompt: clip.aiPrompt,
+      aiTemplate: clip.aiTemplate || 'security',
+      duration: clip.duration || 12, effects: {}
+    }]));
+    form.append('options', JSON.stringify({
+      aspect: '16:9', projectTitle: clip.aiPrompt.substring(0, 30),
+      subtitle: 'AI Generated', transition: 'fade', transitionDuration: 1
+    }));
+
+    const res = await fetch(`${API}/api/render`, { method: 'POST', body: form });
+    const data = await res.json();
+    if (data.jobId) {
+      clip.aiJobId = data.jobId;
+      clip.duration = clip.duration || 12;
+      toast("🤖 AI کلیپ در حال ساخت... منتظر بمانید", "success");
+      // Poll for completion
+      const poll = setInterval(async () => {
+        try {
+          const sr = await fetch(`${API}/api/status/${data.jobId}`);
+          const job = await sr.json();
+          if (job.status === 'done') {
+            clearInterval(poll);
+            clip.aiVideoUrl = `${API}/api/download/${data.jobId}`;
+            clip.duration = 12;
+            toast("✅ AI کلیپ ساخته شد! " + clip.aiPrompt.substring(0, 30), "success");
+            renderTimeline();
+            // Show preview
+            const preview = document.getElementById('previewVideo');
+            const panel = document.getElementById('previewPanel');
+            if (preview && panel) {
+              preview.src = clip.aiVideoUrl;
+              panel.style.display = 'block';
+            }
+          } else if (job.status === 'error') {
+            clearInterval(poll);
+            toast("❌ خطا در ساخت AI: " + (job.error || ''), "error");
+          }
+        } catch {}
+      }, 2000);
+    }
+  } catch (e) {
+    toast("❌ خطا: " + e.message, "error");
+  }
+
   renderTimeline();
   showEditor(clip);
 }
@@ -671,8 +723,9 @@ async function startRender() {
         aiPrompt: clip.aiPrompt || "AI Generated Content",
         aiTemplate: clip.aiTemplate || "security",
         text: clip.text, subtitle: clip.subtitle,
-        duration: clip.duration || 3,
+        duration: clip.duration || 12,
         effects: clip.effects || {},
+        aiVideoUrl: clip.aiVideoUrl || null,
       });
     } else {
       form.append("files", clip.file);

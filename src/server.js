@@ -52,12 +52,26 @@ app.post("/api/render", upload.any(), async (req, res) => {
     const items = [];
     for (const step of timeline) {
       if (step.type === "ai") {
-        const aiClipPath = await generateAIClip({
-          prompt: step.aiPrompt,
-          workDir,
-          templateKey: step.aiTemplate || "security",
-          duration: step.duration || 3,
-        });
+        let aiClipPath;
+        // Check if pre-generated AI video URL is provided
+        if (step.aiVideoUrl) {
+          // Download pre-generated video from our own server
+          const urlParts = step.aiVideoUrl.split('/');
+          const aiJobId = urlParts[urlParts.length - 1];
+          const aiJob = jobs.get(aiJobId);
+          if (aiJob && aiJob.status === 'done' && aiJob.file) {
+            aiClipPath = path.join(OUTPUT_DIR, aiJob.file);
+          }
+        }
+        // Generate if not pre-generated
+        if (!aiClipPath || !fs.existsSync(aiClipPath)) {
+          aiClipPath = await generateAIClip({
+            prompt: step.aiPrompt,
+            workDir,
+            templateKey: step.aiTemplate || "security",
+            duration: step.duration || 12,
+          });
+        }
         items.push({
           type: "video", path: aiClipPath,
           text: step.text, subtitle: step.subtitle,
