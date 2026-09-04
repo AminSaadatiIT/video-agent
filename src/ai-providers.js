@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// AI VIDEO AGENT — Complete Professional Content Generator
-// Parses ANY prompt, generates multi-scene professional videos
+// INTELLIGENT AI VIDEO AGENT — v2.0
+// Parses ANY prompt (Farsi/English), generates professional multi-scene videos
+// Supports: entity extraction, dynamic content, 8 scene types, per-scene editing
 // ═══════════════════════════════════════════════════════════════════════════
 const path = require("path");
 const fs = require("fs");
@@ -17,36 +18,31 @@ function ensureFonts() {
     if (!fs.existsSync(dest)) {
       try {
         var src = fontMap[name];
-        if (fs.existsSync(src)) {
-          var data = fs.readFileSync(src);
-          fs.writeFileSync(dest, data);
-        }
+        if (fs.existsSync(src)) { var data = fs.readFileSync(src); fs.writeFileSync(dest, data); }
       } catch (_) {}
     }
   }
 }
 
 function ffmpeg() {
-  const l = path.join(P, "ffmpeg", "bin", "ffmpeg.exe");
+  var l = path.join(P, "ffmpeg", "bin", "ffmpeg.exe");
   return fs.existsSync(l) ? l : "ffmpeg";
 }
-
 function ffprobe() {
-  const l = path.join(P, "ffmpeg", "bin", "ffprobe.exe");
+  var l = path.join(P, "ffmpeg", "bin", "ffprobe.exe");
   return fs.existsSync(l) ? l : "ffprobe";
 }
-
 function run(cmd, args) {
-  return new Promise((res, rej) => {
-    const p = spawn(cmd, args, { cwd: P });
-    let e = "";
-    p.stderr.on("data", d => { if (e.length < 16384) e += d.toString(); });
-    p.on("close", c => c === 0 ? res() : rej(new Error("ffmpeg " + c + "\n" + e.slice(-2000))));
+  return new Promise(function(res, rej) {
+    var p = spawn(cmd, args, { cwd: P });
+    var e = "";
+    p.stderr.on("data", function(d) { if (e.length < 16384) e += d.toString(); });
+    p.on("close", function(c) { c === 0 ? res() : rej(new Error("ffmpeg " + c + "\n" + e.slice(-2000))); });
   });
 }
 
 // ─── THEMES ───────────────────────────────────────────────────────────────
-const THEMES = {
+var THEMES = {
   security:  { bg: "0x0a0e17", ac: "0x00e5ff", ac2: "0x39ff88", tx: "0xe8f6ff", name: "Cybersecurity" },
   corporate: { bg: "0x0f172a", ac: "0x3b82f6", ac2: "0x10b981", tx: "0xf1f5f9", name: "Corporate" },
   tech:      { bg: "0x050510", ac: "0x8b5cf6", ac2: "0x06b6d4", tx: "0xe2e8f0", name: "Technology" },
@@ -57,8 +53,6 @@ const THEMES = {
 };
 
 // ─── TEXT ESCAPING ────────────────────────────────────────────────────────
-// ffmpeg drawtext filter special chars: : , % ' [ ] ;
-// On Windows spawn(), backslash escaping does NOT work — replace chars instead
 function esc(t) {
   if (!t) return "";
   var s = String(t);
@@ -72,282 +66,462 @@ function esc(t) {
   return s;
 }
 
-// ─── PROMPT ANALYZER (The Brain) ──────────────────────────────────────────
-// Analyzes ANY prompt and extracts structured content for video generation
-function analyzePrompt(prompt) {
-  var p = (prompt || "").trim();
-  var low = p.toLowerCase();
+// ─── FARSI DICTIONARY ─────────────────────────────────────────────────────
+// Maps Farsi keywords to English equivalents for content generation
+var FARSI_MAP = {
+  "امنیت": "security", "فایروال": "firewall", "شبکه": "network", "سرور": "server",
+  "سیستم": "system", "داده": "data", "اطلاعات": "information", "گزارش": "report",
+  "تحلیل": "analysis", "بررسی": "review", "ارزیابی": "assessment", "audit": "audit",
+  "پنتست": "penetration test", "آسیب‌پذیری": "vulnerability", "تهدید": "threat",
+  "ریسک": "risk", "риск": "risk", "عملکرد": "performance", "سرعت": "speed",
+  "کلود": "cloud", "آمازون": "AWS", "اژور": "Azure", "استوریج": "storage",
+  "بکاپ": "backup", "بازیابی": "recovery", "مانیتورینگ": "monitoring",
+  "لاگ": "logs", "آلرت": "alerts", "ایونت": "events", "ترافیک": "traffic",
+  "پهنای باند": "bandwidth", "لاتنسی": "latency", "آپتایم": "uptime",
+  "بیزینس": "business", "استراتژی": "strategy", "مارکتینگ": "marketing",
+  "فروش": "sales", "درآمد": "revenue", "مشتری": "customer", "پروژه": "project",
+  "تیم": "team", "مدیریت": "management", "عملیات": "operations",
+  "پزشکی": "health", "بیمار": "patient", "درمان": "treatment", "دارو": "medicine",
+  "مالی": "finance", "سرمایه‌گذاری": "investment", "بودجه": "budget",
+  "آموزش": "education", "دوره": "course", "آموزش": "training",
+  "طراحی": "design", "توسعه": "development", "برنامه‌نویسی": "programming",
+  "اپلیکیشن": "application", "نرم‌افزار": "software", "سخت‌افزار": "hardware",
+  "گزارش": "report", "داشبورد": "dashboard", "نمودار": "chart", "آمار": "statistics",
+  "نتیجه": "result", "یافته": "finding", "پیشنهاد": "recommendation",
+  "مشکل": "issue", "خطا": "error", "باگ": "bug", "رفع": "fix", "بهبود": "improvement",
+  "وضعیت": "status", "پیشرفت": "progress", "هدف": "goal", "برنامه": "plan",
+  "بودجه": "budget", "هزینه": "cost", "صرفه‌جویی": "savings",
+};
 
-  // Domain detection — maps keywords to professional content domains
-  var domains = {
-    security: {
-      keywords: ["security", "firewall", "pentest", "penetration", "vulnerability", "vuln", "cve", "threat", "attack", "malware", "ransomware", "phishing", "soc", "siem", "ids", "ips", "encryption", "zero trust", "compliance", "gdpr", "iso 27001", "nist"],
-      scenes: function(t) {
-        return [
-          { type: "title", text: t.title || "SECURITY ANALYSIS", sub: t.subtitle || "Comprehensive Assessment", dur: 4 },
-          { type: "bullets", text: "THREAT LANDSCAPE", items: t.points.slice(0, 4), dur: 4 },
-          { type: "metrics", text: "KEY METRICS", metrics: t.metrics, dur: 4 },
-          { type: "bullets", text: "RECOMMENDATIONS", items: t.recommendations, dur: 4 },
-          { type: "cta", text: t.conclusion || "SECURITY POSTURE STRONG", sub: t.cta || "Action Required", dur: 3 },
-        ];
-      }
-    },
-    infrastructure: {
-      keywords: ["infrastructure", "network", "server", "datacenter", "dc", "vm", "container", "docker", "kubernetes", "k8s", "cloud", "aws", "azure", "gcp", "cdn", "dns", "load balancer", "bandwidth", "latency", "uptime", "sla"],
-      scenes: function(t) {
-        return [
-          { type: "title", text: t.title || "INFRASTRUCTURE REVIEW", sub: t.subtitle || "Architecture Assessment", dur: 4 },
-          { type: "bullets", text: "INFRASTRUCTURE OVERVIEW", items: t.points.slice(0, 4), dur: 4 },
-          { type: "metrics", text: "PERFORMANCE METRICS", metrics: t.metrics, dur: 4 },
-          { type: "bullets", text: "OPTIMIZATION PLAN", items: t.recommendations, dur: 4 },
-          { type: "cta", text: t.conclusion || "INFRASTRUCTURE OPTIMIZED", sub: t.cta || "Next Steps", dur: 3 },
-        ];
-      }
-    },
-    business: {
-      keywords: ["business", "strategy", "marketing", "sales", "revenue", "roi", "growth", "customer", "product", "startup", "enterprise", "quarter", "q1", "q2", "q3", "q4", "annual", "fiscal", "profit", "market"],
-      scenes: function(t) {
-        return [
-          { type: "title", text: t.title || "BUSINESS STRATEGY", sub: t.subtitle || "Strategic Overview", dur: 4 },
-          { type: "bullets", text: "KEY INITIATIVES", items: t.points.slice(0, 4), dur: 4 },
-          { type: "metrics", text: "KPI DASHBOARD", metrics: t.metrics, dur: 4 },
-          { type: "bullets", text: "ACTION ITEMS", items: t.recommendations, dur: 4 },
-          { type: "cta", text: t.conclusion || "STRATEGY ALIGNED", sub: t.cta || "Execute Now", dur: 3 },
-        ];
-      }
-    },
-    health: {
-      keywords: ["health", "medical", "patient", "clinical", "diagnosis", "treatment", "pharma", "biotech", "hospital", "care", "wellness", "fitness", "nutrition"],
-      scenes: function(t) {
-        return [
-          { type: "title", text: t.title || "HEALTH REPORT", sub: t.subtitle || "Clinical Assessment", dur: 4 },
-          { type: "bullets", text: "FINDINGS", items: t.points.slice(0, 4), dur: 4 },
-          { type: "metrics", text: "VITAL METRICS", metrics: t.metrics, dur: 4 },
-          { type: "bullets", text: "RECOMMENDATIONS", items: t.recommendations, dur: 4 },
-          { type: "cta", text: t.conclusion || "HEALTH OPTIMIZED", sub: t.cta || "Follow Up", dur: 3 },
-        ];
-      }
-    },
-    education: {
-      keywords: ["education", "learning", "course", "training", "curriculum", "student", "teacher", "university", "school", "lecture", "workshop", "certification"],
-      scenes: function(t) {
-        return [
-          { type: "title", text: t.title || "EDUCATION PROGRAM", sub: t.subtitle || "Learning Overview", dur: 4 },
-          { type: "bullets", text: "PROGRAM HIGHLIGHTS", items: t.points.slice(0, 4), dur: 4 },
-          { type: "metrics", text: "OUTCOMES", metrics: t.metrics, dur: 4 },
-          { type: "bullets", text: "NEXT STEPS", items: t.recommendations, dur: 4 },
-          { type: "cta", text: t.conclusion || "KNOWLEDGE EMPOWERED", sub: t.cta || "Enroll Now", dur: 3 },
-        ];
-      }
-    },
-    finance: {
-      keywords: ["finance", "investment", "portfolio", "stock", "crypto", "bitcoin", "trading", "banking", "loan", "credit", "budget", "forecast", "quarterly"],
-      scenes: function(t) {
-        return [
-          { type: "title", text: t.title || "FINANCIAL ANALYSIS", sub: t.subtitle || "Market Overview", dur: 4 },
-          { type: "bullets", text: "MARKET INSIGHTS", items: t.points.slice(0, 4), dur: 4 },
-          { type: "metrics", text: "PERFORMANCE", metrics: t.metrics, dur: 4 },
-          { type: "bullets", text: "INVESTMENT STRATEGY", items: t.recommendations, dur: 4 },
-          { type: "cta", text: t.conclusion || "PORTFOLIO OPTIMIZED", sub: t.cta || "Act Now", dur: 3 },
-        ];
-      }
-    },
-  };
+// Detect if text contains Farsi characters
+function isFarsi(text) {
+  return /[\u0600-\u06FF]/.test(text);
+}
 
-  // Detect domain
-  var detectedDomain = null;
-  var maxScore = 0;
-  for (var [dk, dv] of Object.entries(domains)) {
-    var score = 0;
-    for (var kw of dv.keywords) {
-      if (low.includes(kw)) score += kw.length;
+// Translate Farsi keywords to English
+function translateFarsi(text) {
+  if (!isFarsi(text)) return text;
+  var result = text;
+  for (var fa in FARSI_MAP) {
+    if (result.indexOf(fa) >= 0) {
+      result = result.replace(new RegExp(fa, "g"), FARSI_MAP[fa]);
     }
-    if (score > maxScore) { maxScore = score; detectedDomain = dk; }
   }
+  return result;
+}
 
-  // Extract key phrases — split by common delimiters
-  var phrases = p.split(/[,;.!?|+\-–—\n]+/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 2; });
-  if (phrases.length === 0) phrases = [p];
+// ─── INTELLIGENT PROMPT PARSER ────────────────────────────────────────────
+// Extracts entities, topics, numbers, actions from ANY prompt
+function parsePrompt(prompt) {
+  var raw = (prompt || "").trim();
+  var translated = translateFarsi(raw);
+  var low = translated.toLowerCase();
+  var originalLow = raw.toLowerCase();
 
-  // Build title from prompt
-  var title = phrases[0].toUpperCase().substring(0, 40);
-  var subtitle = phrases.length > 1 ? phrases[1].substring(0, 50) : detectedDomain ? domains[detectedDomain].name + " Analysis" : "Professional Report";
+  // Extract numbers
+  var numbers = translated.match(/\d+\.?\d*/g) || [];
+  var originalNumbers = raw.match(/\d+\.?\d*/g) || [];
 
-  // Generate points from phrases
-  var points = [];
-  for (var i = 0; i < Math.min(phrases.length, 8); i++) {
-    points.push(phrases[i].substring(0, 60));
-  }
-  // Pad if too few
-  while (points.length < 4) points.push("Analysis " + (points.length + 1) + " - Detailed findings");
+  // Extract key phrases (split by delimiters)
+  var phrases = raw.split(/[,;.!?|+\-–—\n]+/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 2; });
+  if (phrases.length === 0) phrases = [raw];
 
-  // Generate metrics from numbers in prompt
-  var numbers = p.match(/\d+\.?\d*/g) || [];
-  var metrics = [];
-  var metricLabels = ["Score", "Rating", "Level", "Index", "Value", "Score", "Rating", "Level"];
-  for (var mi = 0; mi < Math.min(numbers.length, 6); mi++) {
-    metrics.push({ label: metricLabels[mi] || "Metric", value: numbers[mi] });
-  }
-  if (metrics.length === 0) {
-    metrics = [
-      { label: "Score", value: "92" },
-      { label: "Rating", value: "A+" },
-      { label: "Status", value: "OK" }
-    ];
-  }
-
-  // Generate recommendations
-  var recommendations = [
-    "Implement findings from " + title.substring(0, 30),
-    "Schedule follow-up review within 30 days",
-    "Document all changes and track progress",
-    "Share report with stakeholders"
+  // Detect action words (what the user wants to DO)
+  var actions = [];
+  var actionPatterns = [
+    { en: ["analyze", "analysis", "analyse"], fa: ["تحلیل", "بررسی"], label: "Analysis" },
+    { en: ["report", "reporting"], fa: ["گزارش"], label: "Report" },
+    { en: ["review", "audit"], fa: ["بررسی", "ارزیابی", "audit"], label: "Review" },
+    { en: ["monitor", "monitoring", "track"], fa: ["مانیتورینگ", "پایش"], label: "Monitoring" },
+    { en: ["optimize", "improve", "enhance"], fa: ["بهبود", "بهینه‌سازی"], label: "Optimization" },
+    { en: ["secure", "protect", "defend"], fa: ["امنیت", "محافظت"], label: "Security" },
+    { en: ["deploy", "launch", "release"], fa: ["استقرار", "راه‌اندازی"], label: "Deployment" },
+    { en: ["compare", "benchmark"], fa: ["مقایسه"], label: "Comparison" },
+    { en: ["plan", "strategy", "roadmap"], fa: ["برنامه", "استراتژی"], label: "Planning" },
+    { en: ["present", "pitch", "overview"], fa: ["ارائه", "مرور"], label: "Presentation" },
   ];
 
-  // Build scenes
-  var scenes;
-  if (detectedDomain && domains[detectedDomain]) {
-    scenes = domains[detectedDomain].scenes({
-      title: title, subtitle: subtitle,
-      points: points, metrics: metrics,
-      recommendations: recommendations,
-      conclusion: title.substring(0, 35) + " COMPLETE",
-      cta: "Review and approve"
-    });
-  } else {
-    // Generic scenes for any prompt
-    scenes = [
-      { type: "title", text: title, sub: subtitle, dur: 4 },
-      { type: "bullets", text: "KEY POINTS", items: points.slice(0, 4), dur: 4 },
-      { type: "metrics", text: "ANALYSIS METRICS", metrics: metrics, dur: 4 },
-      { type: "bullets", text: "FINDINGS", items: points.slice(4, 8), dur: 4 },
-      { type: "cta", text: title.substring(0, 35) + " ANALYSIS COMPLETE", sub: "Review and approve", dur: 3 },
-    ];
-  }
-
-  return { domain: detectedDomain, scenes: scenes, title: title, subtitle: subtitle };
-}
-
-// ─── SCENE RENDERERS (The Visual Engine) ──────────────────────────────────
-// Each scene type has its own professional layout with animated effects
-
-function buildTitleScene(text, sub, th, dur) {
-  var filters = [];
-  // Grid background
-  filters.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
-  // Accent line top
-  filters.push("drawbox=x=0:y=0:w=(iw):h=4:color=" + th.ac + ":t=fill");
-  // REPORT label
-  filters.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc("REPORT") + ":fontcolor=" + th.ac + "@0.4:fontsize=14:x=80:y=60");
-  // Horizontal line under label
-  filters.push("drawbox=x=80:y=82:w=120:h=2:color=" + th.ac + ":t=fill");
-  // Main title (large, centered)
-  filters.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=72:x=(w-text_w)/2:y=(h/2)-100");
-  // Subtitle
-  if (sub) {
-    filters.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(sub) + ":fontcolor=" + th.tx + "@0.7:fontsize=28:x=(w-text_w)/2:y=(h/2)+10");
-  }
-  // Decorative line under title
-  filters.push("drawbox=x=(w/2)-100:y=(h/2)+50:w=200:h=2:color=" + th.ac + "@0.5:t=fill");
-  // Bottom accent bar
-  filters.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
-  // Vignette
-  filters.push("vignette=PI/4");
-  return filters.join(",");
-}
-
-function buildBulletsScene(text, items, th, dur) {
-  var filters = [];
-  // Grid background
-  filters.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
-  // Left accent bar
-  filters.push("drawbox=x=0:y=0:w=6:h=1080:color=" + th.ac + ":t=fill");
-  // Section header
-  filters.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=42:x=80:y=60");
-  // Header underline
-  filters.push("drawbox=x=80:y=115:w=500:h=2:color=" + th.ac + "@0.4:t=fill");
-  // Bullet points
-  var startY = 160;
-  for (var i = 0; i < items.length && i < 6; i++) {
-    var y = startY + i * 110;
-    // Bullet dot
-    filters.push("drawbox=x=80:y=" + (y + 12) + ":w=8:h=8:color=" + th.ac2 + ":t=fill");
-    // Bullet text
-    filters.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(items[i]) + ":fontcolor=" + th.tx + "@0.9:fontsize=30:x=104:y=" + y);
-    // Subtle line under bullet
-    if (i < items.length - 1) {
-      filters.push("drawbox=x=104:y=" + (y + 70) + ":w=800:h=1:color=" + th.ac + "@0.1:t=fill");
+  for (var ai = 0; ai < actionPatterns.length; ai++) {
+    var ap = actionPatterns[ai];
+    for (var ki = 0; ki < ap.en.length; ki++) {
+      if (low.indexOf(ap.en[ki]) >= 0) { actions.push(ap.label); break; }
+    }
+    for (var fi = 0; fi < ap.fa.length; fi++) {
+      if (originalLow.indexOf(ap.fa[fi]) >= 0) { if (actions.indexOf(ap.label) < 0) actions.push(ap.label); break; }
     }
   }
-  // Bottom bar
-  filters.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
-  // Vignette
-  filters.push("vignette=PI/4");
-  return filters.join(",");
+  if (actions.length === 0) actions.push("Analysis");
+
+  // Detect topic domain
+  var topicKeywords = {
+    security: ["security", "firewall", "pentest", "vulnerability", "threat", "malware", "encryption", "compliance", "iso", "nist", "soc", "siem", "zero trust", "audit", "penetration", "attack", "breach", "incident"],
+    network: ["network", "bandwidth", "latency", "router", "switch", "vlan", "dns", "dhcp", "tcp", "udp", "vpn", "lan", "wan", "infrastructure", "backbone"],
+    cloud: ["cloud", "aws", "azure", "gcp", "kubernetes", "docker", "container", "saas", "iaas", "paas", "serverless", "lambda"],
+    server: ["server", "cpu", "ram", "storage", "disk", "backup", "recovery", "patch", "vm", "virtualization", "hypervisor"],
+    data: ["data", "database", "sql", "nosql", "migration", "etl", "pipeline", "warehouse", "analytics", "big data"],
+    business: ["business", "strategy", "marketing", "sales", "revenue", "customer", "growth", "roi", "quarter", "annual", "fiscal", "profit", "market", "product", "launch", "startup"],
+    health: ["health", "medical", "patient", "clinical", "diagnosis", "treatment", "hospital", "care", "wellness"],
+    finance: ["finance", "investment", "portfolio", "stock", "crypto", "trading", "banking", "budget", "forecast"],
+    education: ["education", "learning", "course", "training", "student", "teacher", "certification"],
+    dev: ["development", "programming", "code", "api", "frontend", "backend", "fullstack", "react", "node", "python"],
+  };
+
+  var detectedTopic = null;
+  var maxScore = 0;
+  for (var tk in topicKeywords) {
+    var score = 0;
+    var keywords = topicKeywords[tk];
+    for (var ki2 = 0; ki2 < keywords.length; ki2++) {
+      if (low.indexOf(keywords[ki2]) >= 0) score += keywords[ki2].length;
+    }
+    if (score > maxScore) { maxScore = score; detectedTopic = tk; }
+  }
+
+  // Extract entities (capitalized words, tech terms, brand names)
+  var entities = [];
+  var words = translated.split(/\s+/);
+  for (var wi = 0; wi < words.length; wi++) {
+    var w = words[wi].replace(/[^a-zA-Z0-9]/g, "");
+    if (w.length > 2 && w[0] === w[0].toUpperCase() && w[0] !== w[0].toLowerCase()) {
+      entities.push(w);
+    }
+  }
+
+  return {
+    raw: raw,
+    translated: translated,
+    topic: detectedTopic,
+    actions: actions,
+    numbers: numbers,
+    originalNumbers: originalNumbers,
+    phrases: phrases,
+    entities: entities,
+    isFarsi: isFarsi(raw),
+    title: phrases[0].toUpperCase().substring(0, 40),
+    subtitle: phrases.length > 1 ? phrases[1].substring(0, 50) : (detectedTopic ? detectedTopic.charAt(0).toUpperCase() + detectedTopic.slice(1) + " Overview" : "Professional Report"),
+  };
 }
 
-function buildMetricsScene(text, metrics, th, dur) {
-  var filters = [];
-  // Grid background
-  filters.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
-  // Section header
-  filters.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=42:x=80:y=60");
-  filters.push("drawbox=x=80:y=115:w=400:h=2:color=" + th.ac + "@0.4:t=fill");
-  // Metric cards in grid layout
+// ─── DYNAMIC CONTENT GENERATOR ────────────────────────────────────────────
+// Generates varied, professional content based on parsed prompt
+function generateContent(parsed) {
+  var topic = parsed.topic || "general";
+  var action = parsed.actions[0] || "Analysis";
+  var title = parsed.title;
+  var subtitle = parsed.subtitle;
+  var nums = parsed.numbers;
+  var isFarsi = parsed.isFarsi;
+
+  // Generate BULLETS based on topic + action
+  var bulletSets = {
+    security: [
+      ["Perimeter defenses audited", "Access control policies verified", "Threat detection systems active", "Compliance status reviewed"],
+      ["Firewall rules analyzed", "IDS/IPS signatures updated", "Vulnerability scan completed", "Incident response tested"],
+      ["Encryption standards verified", "Authentication flows secured", "Network segmentation confirmed", "Security training delivered"],
+    ],
+    network: [
+      ["Bandwidth utilization measured", "Latency benchmarks established", "Redundancy paths verified", "Monitoring coverage expanded"],
+      ["Topology mapping completed", "Performance baselines set", "Bottlenecks identified", "Capacity planning done"],
+    ],
+    cloud: [
+      ["IAM policies reviewed", "Storage encryption verified", "Network security configured", "Compliance benchmarks met"],
+      ["Resource optimization analyzed", "Cost allocation tracked", "Disaster recovery tested", "Service mesh configured"],
+    ],
+    server: [
+      ["CPU and RAM utilization measured", "Storage capacity planned", "Patch management verified", "Backup schedules confirmed"],
+      ["Performance baselines established", "Security hardening applied", "Monitoring agents deployed", "Disaster recovery tested"],
+    ],
+    data: [
+      ["Data classification completed", "Access controls verified", "Backup integrity confirmed", "Compliance status reviewed"],
+      ["Pipeline performance measured", "Data quality assessed", "Retention policies applied", "Security controls validated"],
+    ],
+    business: [
+      ["Market analysis completed", "Competitive landscape mapped", "Growth opportunities identified", "Revenue targets reviewed"],
+      ["Customer segments analyzed", "Product roadmap aligned", "Marketing channels optimized", "Sales pipeline evaluated"],
+    ],
+    health: [
+      ["Patient outcomes tracked", "Clinical protocols reviewed", "Resource utilization measured", "Quality metrics assessed"],
+    ],
+    finance: [
+      ["Portfolio performance analyzed", "Risk exposure measured", "Return metrics calculated", "Market trends assessed"],
+    ],
+    education: [
+      ["Learning outcomes measured", "Curriculum effectiveness reviewed", "Student engagement tracked", "Certification progress monitored"],
+    ],
+    dev: [
+      ["Code quality metrics reviewed", "Test coverage analyzed", "Deployment pipeline optimized", "Performance benchmarks set"],
+    ],
+    general: [
+      ["Key findings identified", "Data points collected", "Trends analyzed", "Recommendations prepared"],
+      ["Overview completed", "Details documented", "Next steps outlined", "Stakeholders informed"],
+    ],
+  };
+
+  var topicBullets = bulletSets[topic] || bulletSets.general;
+  // Pick a variant based on title hash for variety
+  var hash = 0;
+  for (var h = 0; h < title.length; h++) { hash = ((hash << 5) - hash) + title.charCodeAt(h); hash = hash & hash; }
+  var variant = Math.abs(hash) % topicBullets.length;
+  var bullets = topicBullets[variant];
+
+  // Generate METRICS based on extracted numbers + topic
+  var metrics = [];
+  if (nums.length >= 3) {
+    var labels = getMetricLabels(topic);
+    for (var mi = 0; mi < Math.min(nums.length, 4); mi++) {
+      metrics.push({ label: labels[mi] || "Value", value: nums[mi] });
+    }
+  } else if (nums.length > 0) {
+    var labels2 = getMetricLabels(topic);
+    metrics.push({ label: labels2[0] || "Score", value: nums[0] });
+    metrics.push({ label: "Rating", value: "A+" });
+    metrics.push({ label: "Status", value: "OK" });
+  } else {
+    metrics = generateAutoMetrics(topic);
+  }
+
+  // Generate RECOMMENDATIONS
+  var recommendations = generateRecommendations(topic, action);
+
+  // Generate CONCLUSION
+  var conclusion = generateConclusion(topic, action, title);
+
+  return {
+    title: title,
+    subtitle: subtitle,
+    bullets: bullets,
+    metrics: metrics,
+    recommendations: recommendations,
+    conclusion: conclusion,
+    topic: topic,
+    action: action,
+  };
+}
+
+function getMetricLabels(topic) {
+  var labels = {
+    security: ["Score", "Threats", "Compliance", "Risk Level"],
+    network: ["Uptime", "Bandwidth", "Latency", "Packets"],
+    cloud: ["Services", "Cost", "Uptime", "Regions"],
+    server: ["CPU", "RAM", "Storage", "Uptime"],
+    data: ["Records", "Quality", "Throughput", "Latency"],
+    business: ["Revenue", "Growth", "Customers", "ROI"],
+    health: ["Score", "Recovery", "Satisfaction", "Efficiency"],
+    finance: ["Return", "Risk", "Sharpe", "Alpha"],
+    education: ["Pass Rate", "Completion", "Engagement", "Score"],
+    dev: ["Coverage", "Builds", "Deploys", "Bugs"],
+    general: ["Score", "Rating", "Index", "Level"],
+  };
+  return labels[topic] || labels.general;
+}
+
+function generateAutoMetrics(topic) {
+  var sets = {
+    security: [{ label: "Security Score", value: "94" }, { label: "Threats Blocked", value: "1.2K" }, { label: "Compliance", value: "97pct" }],
+    network: [{ label: "Uptime", value: "99.97pct" }, { label: "Bandwidth", value: "8.2Gbps" }, { label: "Latency", value: "1.8ms" }],
+    cloud: [{ label: "Services", value: "47" }, { label: "Uptime", value: "99.99pct" }, { label: "Cost", value: "$2.4K" }],
+    server: [{ label: "Servers", value: "32" }, { label: "CPU Avg", value: "67pct" }, { label: "Uptime", value: "99.9pct" }],
+    business: [{ label: "Revenue", value: "$1.2M" }, { label: "Growth", value: "34pct" }, { label: "ROI", value: "4.2x" }],
+    general: [{ label: "Score", value: "92" }, { label: "Rating", value: "A+" }, { label: "Status", value: "OK" }],
+  };
+  return sets[topic] || sets.general;
+}
+
+function generateRecommendations(topic, action) {
+  var recs = {
+    security: [
+      "Implement zero-trust architecture across all network segments",
+      "Deploy automated threat detection with real-time alerting",
+      "Schedule quarterly penetration testing and vulnerability assessments",
+      "Enhance security awareness training for all team members",
+    ],
+    network: [
+      "Upgrade backbone capacity to handle projected traffic growth",
+      "Implement SD-WAN for intelligent traffic routing",
+      "Deploy network monitoring with proactive alerting",
+      "Establish redundant connectivity for critical services",
+    ],
+    cloud: [
+      "Implement cost optimization with reserved instances",
+      "Enable auto-scaling for peak demand periods",
+      "Strengthen IAM policies with least-privilege access",
+      "Deploy multi-region failover for high availability",
+    ],
+    server: [
+      "Implement automated patch management across all servers",
+      "Deploy container orchestration for workload optimization",
+      "Establish disaster recovery with tested RTO and RPO",
+      "Upgrade monitoring with predictive analytics",
+    ],
+    business: [
+      "Expand into high-growth market segments identified in analysis",
+      "Optimize pricing strategy based on competitive positioning",
+      "Invest in customer retention programs for loyalty growth",
+      "Launch data-driven marketing campaigns for lead generation",
+    ],
+    general: [
+      "Review and prioritize key findings from the analysis",
+      "Develop implementation roadmap with clear milestones",
+      "Establish KPI tracking for ongoing performance monitoring",
+      "Schedule follow-up review within 30 days",
+    ],
+  };
+  return recs[topic] || recs.general;
+}
+
+function generateConclusion(topic, action, title) {
+  var conclusions = {
+    security: action + " Complete - Security Posture STRONG",
+    network: action + " Complete - Network Performance OPTIMAL",
+    cloud: action + " Complete - Cloud Infrastructure SECURED",
+    server: action + " Complete - Server Fleet HEALTHY",
+    data: action + " Complete - Data Pipeline OPTIMIZED",
+    business: action + " Complete - Strategy ALIGNED",
+    general: action + " Complete - All Systems NOMINAL",
+  };
+  return conclusions[topic] || (action + " Complete");
+}
+
+// ─── SCENE GENERATORS (8 Types) ──────────────────────────────────────────
+
+function buildTitleScene(text, sub, th) {
+  var f = [];
+  f.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
+  f.push("drawbox=x=0:y=0:w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc("REPORT") + ":fontcolor=" + th.ac + "@0.4:fontsize=14:x=80:y=60");
+  f.push("drawbox=x=80:y=82:w=120:h=2:color=" + th.ac + ":t=fill");
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=72:x=(w-text_w)/2:y=(h/2)-100");
+  if (sub) f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(sub) + ":fontcolor=" + th.tx + "@0.7:fontsize=28:x=(w-text_w)/2:y=(h/2)+10");
+  f.push("drawbox=x=(w/2)-100:y=(h/2)+50:w=200:h=2:color=" + th.ac + "@0.5:t=fill");
+  f.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("vignette=PI/4");
+  return f.join(",");
+}
+
+function buildBulletsScene(text, items, th) {
+  var f = [];
+  f.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
+  f.push("drawbox=x=0:y=0:w=6:h=1080:color=" + th.ac + ":t=fill");
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=42:x=80:y=60");
+  f.push("drawbox=x=80:y=115:w=500:h=2:color=" + th.ac + "@0.4:t=fill");
+  var sy = 160;
+  for (var i = 0; i < items.length && i < 6; i++) {
+    var y = sy + i * 110;
+    f.push("drawbox=x=80:y=" + (y + 12) + ":w=8:h=8:color=" + th.ac2 + ":t=fill");
+    f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(items[i]) + ":fontcolor=" + th.tx + "@0.9:fontsize=30:x=104:y=" + y);
+    if (i < items.length - 1) f.push("drawbox=x=104:y=" + (y + 70) + ":w=800:h=1:color=" + th.ac + "@0.1:t=fill");
+  }
+  f.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("vignette=PI/4");
+  return f.join(",");
+}
+
+function buildMetricsScene(text, metrics, th) {
+  var f = [];
+  f.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=42:x=80:y=60");
+  f.push("drawbox=x=80:y=115:w=400:h=2:color=" + th.ac + "@0.4:t=fill");
   var cols = Math.min(metrics.length, 3);
-  var rows = Math.ceil(metrics.length / cols);
-  var cardW = 480;
-  var cardH = 180;
-  var gapX = 40;
-  var gapY = 40;
-  var startX = (1920 - (cols * cardW + (cols - 1) * gapX)) / 2;
-  var startY = 180;
-
+  var cw = 480, ch = 180, gx = 40, gy = 40;
+  var sx = (1920 - (cols * cw + (cols - 1) * gx)) / 2;
+  var sy = 180;
   for (var i = 0; i < metrics.length; i++) {
-    var col = i % cols;
-    var row = Math.floor(i / cols);
-    var x = startX + col * (cardW + gapX);
-    var y = startY + row * (cardH + gapY);
+    var col = i % cols, row = Math.floor(i / cols);
+    var x = sx + col * (cw + gx), y = sy + row * (ch + gy);
     var m = metrics[i];
-
-    // Card background
-    filters.push("drawbox=x=" + x + ":y=" + y + ":w=" + cardW + ":h=" + cardH + ":color=" + th.ac + "@0.08:t=fill");
-    // Card border
-    filters.push("drawbox=x=" + x + ":y=" + y + ":w=" + cardW + ":h=2:color=" + th.ac + "@0.3:t=fill");
-    // Metric value (large)
-    filters.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(String(m.value)) + ":fontcolor=" + th.ac + ":fontsize=64:x=" + (x + cardW / 2) + "-(text_w/2):y=" + (y + 40));
-    // Metric label
-    filters.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(m.label) + ":fontcolor=" + th.tx + "@0.6:fontsize=20:x=" + (x + cardW / 2) + "-(text_w/2):y=" + (y + 120));
+    f.push("drawbox=x=" + x + ":y=" + y + ":w=" + cw + ":h=" + ch + ":color=" + th.ac + "@0.08:t=fill");
+    f.push("drawbox=x=" + x + ":y=" + y + ":w=" + cw + ":h=2:color=" + th.ac + "@0.3:t=fill");
+    f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(String(m.value)) + ":fontcolor=" + th.ac + ":fontsize=64:x=" + (x + cw / 2) + "-(text_w/2):y=" + (y + 40));
+    f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(m.label) + ":fontcolor=" + th.tx + "@0.6:fontsize=20:x=" + (x + cw / 2) + "-(text_w/2):y=" + (y + 120));
   }
-  // Bottom bar
-  filters.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
-  // Vignette
-  filters.push("vignette=PI/4");
-  return filters.join(",");
+  f.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("vignette=PI/4");
+  return f.join(",");
 }
 
-function buildCtaScene(text, sub, th, dur) {
-  var filters = [];
-  // Grid background
-  filters.push("drawgrid=w=96:h=54:t=1:c=" + th.ac2 + "@0.06");
-  // Large centered text
-  filters.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=56:x=(w-text_w)/2:y=(h/2)-60");
-  // Subtitle
-  if (sub) {
-    filters.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(sub) + ":fontcolor=" + th.tx + "@0.7:fontsize=24:x=(w-text_w)/2:y=(h/2)+20");
+function buildTimelineScene(text, steps, th) {
+  var f = [];
+  f.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=42:x=80:y=60");
+  f.push("drawbox=x=80:y=115:w=400:h=2:color=" + th.ac + "@0.4:t=fill");
+  // Vertical timeline line
+  f.push("drawbox=x=100:y=160:w=3:h=600:color=" + th.ac + "@0.3:t=fill");
+  for (var i = 0; i < steps.length && i < 5; i++) {
+    var y = 180 + i * 130;
+    f.push("drawbox=x=93:y=" + (y + 2) + ":w=16:h=16:color=" + th.ac + ":t=fill");
+    f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc("Step " + (i + 1)) + ":fontcolor=" + th.ac + ":fontsize=16:x=124:y=" + y);
+    f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(steps[i]) + ":fontcolor=" + th.tx + "@0.9:fontsize=26:x=124:y=" + (y + 24));
   }
+  f.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("vignette=PI/4");
+  return f.join(",");
+}
+
+function buildComparisonScene(text, left, right, th) {
+  var f = [];
+  f.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=42:x=(w-text_w)/2:y=60");
+  f.push("drawbox=x=0:y=115:w=(iw):h=2:color=" + th.ac + "@0.3:t=fill");
+  // Left column
+  f.push("drawbox=x=60:y=160:w=840:h=600:color=" + th.ac + "@0.06:t=fill");
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(left.title || "BEFORE") + ":fontcolor=" + th.ac + ":fontsize=28:x=100:y=180");
+  for (var i = 0; i < (left.items || []).length && i < 4; i++) {
+    f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(left.items[i]) + ":fontcolor=" + th.tx + "@0.8:fontsize=24:x=100:y=" + (240 + i * 80));
+  }
+  // Right column
+  f.push("drawbox=x=1020:y=160:w=840:h=600:color=" + th.ac2 + "@0.06:t=fill");
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(right.title || "AFTER") + ":fontcolor=" + th.ac2 + ":fontsize=28:x=1060:y=180");
+  for (var j = 0; j < (right.items || []).length && j < 4; j++) {
+    f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(right.items[j]) + ":fontcolor=" + th.tx + "@0.8:fontsize=24:x=1060:y=" + (240 + j * 80));
+  }
+  // Divider
+  f.push("drawbox=x=958:y=160:w=4:h=600:color=" + th.ac + "@0.2:t=fill");
+  f.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("vignette=PI/4");
+  return f.join(",");
+}
+
+function buildQuoteScene(text, author, th) {
+  var f = [];
+  f.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.04");
+  // Large quote mark
+  f.push("drawbox=x=120:y=200:w=40:h=80:color=" + th.ac + "@0.15:t=fill");
+  // Quote text (centered, large)
+  f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(text) + ":fontcolor=" + th.tx + ":fontsize=36:x=(w-text_w)/2:y=(h/2)-40");
+  // Author
+  if (author) f.push("drawtext=fontfile=output/fonts/arial.ttf:text=- " + esc(author) + ":fontcolor=" + th.ac + "@0.6:fontsize=20:x=(w-text_w)/2:y=(h/2)+40");
+  f.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("vignette=PI/4");
+  return f.join(",");
+}
+
+function buildStatsScene(text, bigNumber, label, th) {
+  var f = [];
+  f.push("drawgrid=w=96:h=54:t=1:c=" + th.ac + "@0.06");
+  // Giant number
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(String(bigNumber)) + ":fontcolor=" + th.ac + ":fontsize=160:x=(w-text_w)/2:y=(h/2)-120");
+  // Label
+  f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(label || text) + ":fontcolor=" + th.tx + "@0.7:fontsize=28:x=(w-text_w)/2:y=(h/2)+60");
   // Decorative lines
-  filters.push("drawbox=x=(w/2)-120:y=(h/2)+60:w=240:h=2:color=" + th.ac + ":t=fill");
-  // Video Agent branding
-  filters.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc("VIDEO AGENT") + ":fontcolor=" + th.tx + "@0.15:fontsize=12:x=(w-text_w)/2:y=(h-40)");
-  // Top accent bar
-  filters.push("drawbox=x=0:y=0:w=(iw):h=4:color=" + th.ac + ":t=fill");
-  // Vignette
-  filters.push("vignette=PI/4");
-  return filters.join(",");
+  f.push("drawbox=x=(w/2)-80:y=(h/2)+30:w=160:h=2:color=" + th.ac + "@0.4:t=fill");
+  f.push("drawbox=x=0:y=(ih-4):w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("vignette=PI/4");
+  return f.join(",");
 }
 
-// ─── SCENE GENERATOR ──────────────────────────────────────────────────────
+function buildCtaScene(text, sub, th) {
+  var f = [];
+  f.push("drawgrid=w=96:h=54:t=1:c=" + th.ac2 + "@0.06");
+  f.push("drawtext=fontfile=output/fonts/arialbd.ttf:text=" + esc(text) + ":fontcolor=" + th.ac + ":fontsize=56:x=(w-text_w)/2:y=(h/2)-60");
+  if (sub) f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc(sub) + ":fontcolor=" + th.tx + "@0.7:fontsize=24:x=(w-text_w)/2:y=(h/2)+20");
+  f.push("drawbox=x=(w/2)-120:y=(h/2)+60:w=240:h=2:color=" + th.ac + ":t=fill");
+  f.push("drawtext=fontfile=output/fonts/arial.ttf:text=" + esc("VIDEO AGENT") + ":fontcolor=" + th.tx + "@0.15:fontsize=12:x=(w-text_w)/2:y=(h-40)");
+  f.push("drawbox=x=0:y=0:w=(iw):h=4:color=" + th.ac + ":t=fill");
+  f.push("vignette=PI/4");
+  return f.join(",");
+}
+
+// ─── SCENE RENDERER ───────────────────────────────────────────────────────
 async function renderScene(sceneDef, theme, workDir, index) {
   var ff = ffmpeg();
   var th = THEMES[theme] || THEMES.security;
@@ -355,34 +529,22 @@ async function renderScene(sceneDef, theme, workDir, index) {
   var filters;
 
   switch (sceneDef.type) {
-    case "title":
-      filters = buildTitleScene(sceneDef.text, sceneDef.sub, th, dur);
-      break;
-    case "bullets":
-      filters = buildBulletsScene(sceneDef.text, sceneDef.items || [], th, dur);
-      break;
-    case "metrics":
-      filters = buildMetricsScene(sceneDef.text, sceneDef.metrics || [], th, dur);
-      break;
-    case "cta":
-      filters = buildCtaScene(sceneDef.text, sceneDef.sub, th, dur);
-      break;
-    default:
-      filters = buildBulletsScene(sceneDef.text, sceneDef.items || [], th, dur);
+    case "title": filters = buildTitleScene(sceneDef.text, sceneDef.sub, th); break;
+    case "bullets": filters = buildBulletsScene(sceneDef.text, sceneDef.items || [], th); break;
+    case "metrics": filters = buildMetricsScene(sceneDef.text, sceneDef.metrics || [], th); break;
+    case "timeline": filters = buildTimelineScene(sceneDef.text, sceneDef.items || [], th); break;
+    case "comparison": filters = buildComparisonScene(sceneDef.text, sceneDef.left || {}, sceneDef.right || {}, th); break;
+    case "quote": filters = buildQuoteScene(sceneDef.text, sceneDef.sub, th); break;
+    case "stats": filters = buildStatsScene(sceneDef.text, sceneDef.bigNumber || "0", sceneDef.sub, th); break;
+    case "cta": filters = buildCtaScene(sceneDef.text, sceneDef.sub, th); break;
+    default: filters = buildBulletsScene(sceneDef.text, sceneDef.items || [], th);
   }
 
   var out = path.join(workDir, "_s" + index + ".mp4");
   try {
-    await run(ff, [
-      "-y", "-f", "lavfi", "-i",
-      "color=c=" + th.bg + ":s=1920x1080:d=" + dur + ":r=30",
-      "-filter_complex", filters,
-      "-c:v", "libx264", "-pix_fmt", "yuv420p",
-      "-r", "30", "-fps_mode", "cfr", "-t", String(dur),
-      out
-    ]);
-  } catch (renderErr) {
-    throw renderErr;
+    await run(ff, ["-y", "-f", "lavfi", "-i", "color=c=" + th.bg + ":s=1920x1080:d=" + dur + ":r=30", "-filter_complex", filters, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", "-fps_mode", "cfr", "-t", String(dur), out]);
+  } catch (err) {
+    throw err;
   }
   return out;
 }
@@ -390,37 +552,24 @@ async function renderScene(sceneDef, theme, workDir, index) {
 // ─── CONCATENATION ────────────────────────────────────────────────────────
 async function concatScenes(scenes, out) {
   var ff = ffmpeg();
-  if (scenes.length === 1) {
-    await run(ff, ["-v", "error", "-y", "-i", scenes[0], "-c", "copy", out]);
-    return;
-  }
+  if (scenes.length === 1) { await run(ff, ["-v", "error", "-y", "-i", scenes[0], "-c", "copy", out]); return; }
   var probe = ffprobe();
   var durations = [];
   for (var si = 0; si < scenes.length; si++) {
     var p = spawn(probe, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", scenes[si]]);
-    var o = "";
-    p.stdout.on("data", function(d) { o += d.toString(); });
+    var o = ""; p.stdout.on("data", function(d) { o += d.toString(); });
     await new Promise(function(r) { p.on("close", r); });
     durations.push(parseFloat(o.trim()) || 3);
   }
-  // Build xfade filter chain
-  var filter = "";
-  var lastLabel = "0:v";
-  var cumulativeOffset = durations[0];
+  var filter = "", lastLabel = "0:v", cu = durations[0];
   var ins = [];
   scenes.forEach(function(s) { ins.push("-i", s); });
   for (var i = 1; i < scenes.length; i++) {
-    var xfadeDur = 0.8;
-    var offset = cumulativeOffset - xfadeDur;
-    var outLabel = i === scenes.length - 1 ? "vout" : "v" + i;
-    filter += "[" + lastLabel + "][" + i + ":v]xfade=transition=fade:duration=" + xfadeDur + ":offset=" + offset.toFixed(2) + "[" + outLabel + "];";
-    lastLabel = outLabel;
-    cumulativeOffset += durations[i] - xfadeDur;
+    var off = cu - 0.8, lb = i === scenes.length - 1 ? "vout" : "v" + i;
+    filter += "[" + lastLabel + "][" + i + ":v]xfade=transition=fade:duration=0.8:offset=" + off.toFixed(2) + "[" + lb + "];";
+    lastLabel = lb; cu += durations[i] - 0.8;
   }
-  await run(ff, ["-v", "error", "-y"].concat(ins).concat([
-    "-filter_complex", filter.replace(/;$/, ""),
-    "-map", "[vout]", "-c:v", "libx264", "-pix_fmt", "yuv420p", out
-  ]));
+  await run(ff, ["-v", "error", "-y"].concat(ins).concat(["-filter_complex", filter.replace(/;$/, ""), "-map", "[vout]", "-c:v", "libx264", "-pix_fmt", "yuv420p", out]));
 }
 
 // ─── MAIN AI AGENT ────────────────────────────────────────────────────────
@@ -428,62 +577,78 @@ async function generateAIClip({ prompt, workDir, templateKey, duration }) {
   fs.mkdirSync(workDir, { recursive: true });
   ensureFonts();
 
-  // Analyze the prompt — this is where the AI brain works
-  var analysis = analyzePrompt(prompt);
+  // STEP 1: Parse the prompt intelligently
+  var parsed = parsePrompt(prompt);
 
-  // Determine total duration and per-scene duration
-  var totalDuration = duration || (analysis.scenes.length * 4);
-  var perSceneDur = totalDuration / analysis.scenes.length;
+  // STEP 2: Generate dynamic content based on analysis
+  var content = generateContent(parsed);
 
-  // Adjust scene durations to fit total
-  var remaining = totalDuration;
-  for (var i = 0; i < analysis.scenes.length; i++) {
-    if (i === analysis.scenes.length - 1) {
-      analysis.scenes[i].dur = Math.max(2, remaining);
-    } else {
-      analysis.scenes[i].dur = perSceneDur;
-      remaining -= perSceneDur;
-    }
+  // STEP 3: Build scene plan (varied scene types based on content)
+  var scenes = [];
+  var totalDur = duration || 16;
+
+  // Scene 1: Title
+  scenes.push({ type: "title", text: content.title, sub: content.subtitle, dur: 4 });
+
+  // Scene 2: Key Findings (bullets)
+  scenes.push({ type: "bullets", text: content.action.toUpperCase() + " - KEY FINDINGS", items: content.bullets, dur: 4 });
+
+  // Scene 3: Metrics Dashboard
+  scenes.push({ type: "metrics", text: "METRICS & PERFORMANCE", metrics: content.metrics, dur: 4 });
+
+  // Scene 4: Timeline (steps to implement)
+  scenes.push({ type: "timeline", text: "IMPLEMENTATION PLAN", items: content.recommendations, dur: 4 });
+
+  // Scene 5: Comparison (before/after if we have numbers)
+  if (content.metrics.length >= 2) {
+    scenes.push({
+      type: "comparison", text: "IMPACT ANALYSIS",
+      left: { title: "CURRENT STATE", items: content.bullets.slice(0, 3) },
+      right: { title: "TARGET STATE", items: content.recommendations.slice(0, 3) },
+      dur: 4
+    });
   }
 
-  // Render each scene (with retry on failure)
+  // Scene 6: CTA
+  scenes.push({ type: "cta", text: content.conclusion, sub: content.action + " - All Systems Nominal", dur: 3 });
+
+  // Adjust durations to fit total
+  var perScene = totalDur / scenes.length;
+  var remaining = totalDur;
+  for (var si = 0; si < scenes.length; si++) {
+    if (si === scenes.length - 1) { scenes[si].dur = Math.max(2, remaining); }
+    else { scenes[si].dur = perScene; remaining -= perScene; }
+  }
+
+  // STEP 4: Render each scene
   var scenePaths = [];
-  for (var si = 0; si < analysis.scenes.length; si++) {
+  for (var ri = 0; ri < scenes.length; ri++) {
     var retries = 0;
     while (retries < 3) {
       try {
-        await renderScene(analysis.scenes[si], templateKey || "security", workDir, si);
+        await renderScene(scenes[ri], templateKey || "security", workDir, ri);
         break;
       } catch (err) {
         retries++;
-        if (retries >= 3) {
-          console.error("Scene " + si + " (" + analysis.scenes[si].type + ") failed after 3 attempts:", err.message.substring(0, 300));
-          throw err;
-        }
-        // Wait before retry
+        if (retries >= 3) throw err;
         await new Promise(function(r) { setTimeout(r, 500 * retries); });
       }
     }
-    scenePaths.push(path.join(workDir, "_s" + si + ".mp4"));
+    scenePaths.push(path.join(workDir, "_s" + ri + ".mp4"));
   }
 
-  // Concatenate with crossfade transitions
+  // STEP 5: Concatenate with crossfade
   var out = path.join(workDir, "ai_" + Date.now() + ".mp4");
   await concatScenes(scenePaths, out);
 
-  // Cleanup temp scenes
-  for (var ci = 0; ci < scenePaths.length; ci++) {
-    try { fs.unlinkSync(scenePaths[ci]); } catch (_) {}
-  }
-
+  // Cleanup
+  for (var ci = 0; ci < scenePaths.length; ci++) { try { fs.unlinkSync(scenePaths[ci]); } catch (_) {} }
   return out;
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────
 function getTemplates() {
-  return Object.keys(THEMES).map(function(k) {
-    return { id: k, name: THEMES[k].name, accent: THEMES[k].ac };
-  });
+  return Object.keys(THEMES).map(function(k) { return { id: k, name: THEMES[k].name, accent: THEMES[k].ac }; });
 }
 
-module.exports = { generateAIClip, getTemplates, THEMES, analyzePrompt };
+module.exports = { generateAIClip, getTemplates, THEMES, parsePrompt, generateContent };
