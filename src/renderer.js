@@ -65,7 +65,16 @@ function run(cmd, args, cwd) {
 }
 
 function escapeText(t) {
-  return String(t).replace(/:/g, "\\:").replace(/%/g, "%%").replace(/'/g, "\u2019");
+  if (!t) return "";
+  var s = String(t);
+  s = s.replace(/\\/g, "");
+  s = s.replace(/:/g, " -");
+  s = s.replace(/%/g, "%%");
+  s = s.replace(/'/g, "'");
+  s = s.replace(/,/g, " -");
+  s = s.replace(/;/g, ".");
+  s = s.replace(/[\[\]]/g, "");
+  return s;
 }
 
 // Build text overlay filter (supports positioning, size, box, animation)
