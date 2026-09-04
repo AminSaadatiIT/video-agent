@@ -3,9 +3,27 @@ const path = require("path");
 const fs = require("fs");
 const template = require("../templates/security.json");
 
+const PROJECT_ROOT = path.join(__dirname, "..");
+
+// Ensure fonts at a colon-free relative path
+function ensureFonts() {
+  const fontDir = path.join(PROJECT_ROOT, "output", "fonts");
+  if (!fs.existsSync(fontDir)) {
+    fs.mkdirSync(fontDir, { recursive: true });
+    try {
+      if (fs.existsSync(template.font)) fs.copyFileSync(template.font, path.join(fontDir, "consola.ttf"));
+      if (fs.existsSync(template.fontRegular)) fs.copyFileSync(template.fontRegular, path.join(fontDir, "consolab.ttf"));
+    } catch (_) {}
+  }
+}
+
+// Relative font path from project root (no colons!)
+const FONT = "output/fonts/consola.ttf";
+const FONT_BOLD = "output/fonts/consolab.ttf";
+
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args);
+    const p = spawn(cmd, args, { cwd: PROJECT_ROOT });
     let stderr = "";
     const MAX_STDERR = 4096;
     p.stderr.on("data", (d) => {
@@ -19,25 +37,18 @@ function run(cmd, args) {
 }
 
 function escapeText(t) {
-  return String(t).replace(/\\/g, "\\\\\\\\").replace(/:/g, "\\:").replace(/'/g, "\u2019");
+  return String(t).replace(/:/g, "\\:").replace(/%/g, "%%");
 }
 
-// Escape font path for ffmpeg drawtext filter (colons need escaping)
-function escapeFontPath(p) {
-  return String(p).replace(/:/g, "\\:");
-}
-
-// Build one normalized clip (image slide, video clip, or title card) as an mp4 segment
 async function buildSegment({ type, srcPath, text, subtitle, duration, w, h, workDir, index }) {
   const out = path.join(workDir, `seg_${index}.mp4`);
-  const { colors, font, fontRegular } = template;
+  const { colors } = template;
 
   if (type === "title") {
-    // Solid bg + grid pattern + big title text (used for intro/outro)
     const dur = duration || template.intro.duration;
-    const drawText = `drawtext=fontfile='${escapeFontPath(font)}':text='${escapeText(text)}':fontcolor=${colors.accent}:fontsize=${Math.round(h * 0.07)}:x=(w-text_w)/2:y=(h-text_h)/2-40`;
+    const drawText = `drawtext=fontfile=${FONT_BOLD}:text='${escapeText(text)}':fontcolor=${colors.accent}:fontsize=${Math.round(h * 0.07)}:x=(w-text_w)/2:y=(h-text_h)/2-40`;
     const drawSub = subtitle
-      ? `,drawtext=fontfile='${escapeFontPath(fontRegular)}':text='${escapeText(subtitle)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.025)}:x=(w-text_w)/2:y=(h/2)+40`
+      ? `,drawtext=fontfile=${FONT}:text='${escapeText(subtitle)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.025)}:x=(w-text_w)/2:y=(h/2)+40`
       : "";
     const vf = `drawgrid=w=${Math.round(w / 12)}:h=${Math.round(h / 12)}:t=1:c=${colors.accent}@0.15,${drawText}${drawSub}`;
     await run("ffmpeg", [
@@ -51,12 +62,11 @@ async function buildSegment({ type, srcPath, text, subtitle, duration, w, h, wor
 
   if (type === "image") {
     const dur = duration || template.slide.defaultDuration;
-    // Ken Burns: slow zoom + pan, scaled up first for smoothness
     const zoom = template.slide.kenBurns
       ? `,zoompan=z='min(zoom+0.0007,1.15)':d=${dur * 30}:s=${w}x${h}:fps=30`
       : "";
     const caption = text
-      ? `,drawtext=fontfile='${escapeFontPath(fontRegular)}':text='${escapeText(text)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.03)}:box=1:boxcolor=${colors.bg}@0.55:boxborderw=14:x=40:y=h-th-50`
+      ? `,drawtext=fontfile=${FONT}:text='${escapeText(text)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.03)}:box=1:boxcolor=${colors.bg}@0.55:boxborderw=14:x=40:y=h-th-50`
       : "";
     await run("ffmpeg", [
       "-v", "error",
@@ -69,7 +79,7 @@ async function buildSegment({ type, srcPath, text, subtitle, duration, w, h, wor
 
   if (type === "video") {
     const caption = text
-      ? `,drawtext=fontfile='${escapeFontPath(fontRegular)}':text='${escapeText(text)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.03)}:box=1:boxcolor=${colors.bg}@0.55:boxborderw=14:x=40:y=h-th-50`
+      ? `,drawtext=fontfile=${FONT}:text='${escapeText(text)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.03)}:box=1:boxcolor=${colors.bg}@0.55:boxborderw=14:x=40:y=h-th-50`
       : "";
     const trim = duration ? ["-t", String(duration)] : [];
     await run("ffmpeg", [
@@ -84,7 +94,6 @@ async function buildSegment({ type, srcPath, text, subtitle, duration, w, h, wor
   throw new Error(`Unknown segment type: ${type}`);
 }
 
-// Concatenate segments with crossfade transitions using xfade
 async function concatWithTransitions(segmentPaths, outPath, w, h) {
   if (segmentPaths.length === 1) {
     await run("ffmpeg", ["-v", "error", "-y", "-i", segmentPaths[0], "-c", "copy", outPath]);
@@ -116,14 +125,16 @@ async function concatWithTransitions(segmentPaths, outPath, w, h) {
     "-v", "error",
     "-y", ...inputs,
     "-filter_complex", filter,
-    "-map", `[vout]`,
+    "-map", "[vout]",
     "-c:v", "libx264", "-pix_fmt", "yuv420p", outPath
   ]);
 }
 
 function getDuration(filePath) {
   return new Promise((resolve, reject) => {
-    const p = spawn("ffprobe", [
+    const ffprobePath = path.join(PROJECT_ROOT, "ffmpeg", "bin", "ffprobe.exe");
+    const ffprobe = fs.existsSync(ffprobePath) ? ffprobePath : "ffprobe";
+    const p = spawn(ffprobe, [
       "-v", "error", "-show_entries", "format=duration",
       "-of", "default=noprint_wrappers=1:nokey=1", filePath
     ]);
@@ -134,17 +145,13 @@ function getDuration(filePath) {
   });
 }
 
-/**
- * items: [{ type: 'image'|'video', path, text, duration }]
- * options: { aspect: '16:9'|'9:16'|'1:1', projectTitle, subtitle, cta }
- */
 async function renderProject({ items, options, workDir, outPath }) {
+  ensureFonts();
   fs.mkdirSync(workDir, { recursive: true });
   const { w, h } = template.resolutions[options.aspect] || template.resolutions["16:9"];
 
   const segments = [];
 
-  // Intro title card
   segments.push(
     await buildSegment({
       type: "title",
@@ -155,7 +162,6 @@ async function renderProject({ items, options, workDir, outPath }) {
     })
   );
 
-  // Body items
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     segments.push(
@@ -169,20 +175,18 @@ async function renderProject({ items, options, workDir, outPath }) {
     );
   }
 
-  // Outro title card
   segments.push(
     await buildSegment({
       type: "title",
       text: "THANK YOU",
       subtitle: options.cta || template.outro.cta,
-      duration: template.outro.duration,
+      duration: template.intro.duration,
       w, h, workDir, index: "outro"
     })
   );
 
   await concatWithTransitions(segments, outPath, w, h);
 
-  // cleanup segments
   for (const s of segments) {
     try { fs.unlinkSync(s); } catch (_) {}
   }
