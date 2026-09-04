@@ -7,7 +7,10 @@ function run(cmd, args) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args);
     let stderr = "";
-    p.stderr.on("data", (d) => (stderr += d.toString()));
+    const MAX_STDERR = 4096;
+    p.stderr.on("data", (d) => {
+      if (stderr.length < MAX_STDERR) stderr += d.toString();
+    });
     p.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`${cmd} exited ${code}\n${stderr.slice(-2000)}`));
@@ -19,6 +22,11 @@ function escapeText(t) {
   return String(t).replace(/\\/g, "\\\\\\\\").replace(/:/g, "\\:").replace(/'/g, "\u2019");
 }
 
+// Escape font path for ffmpeg drawtext filter (colons need escaping)
+function escapeFontPath(p) {
+  return String(p).replace(/:/g, "\\:");
+}
+
 // Build one normalized clip (image slide, video clip, or title card) as an mp4 segment
 async function buildSegment({ type, srcPath, text, subtitle, duration, w, h, workDir, index }) {
   const out = path.join(workDir, `seg_${index}.mp4`);
@@ -27,15 +35,16 @@ async function buildSegment({ type, srcPath, text, subtitle, duration, w, h, wor
   if (type === "title") {
     // Solid bg + grid pattern + big title text (used for intro/outro)
     const dur = duration || template.intro.duration;
-    const drawText = `drawtext=fontfile=${font}:text='${escapeText(text)}':fontcolor=${colors.accent}:fontsize=${Math.round(h * 0.07)}:x=(w-text_w)/2:y=(h-text_h)/2-40`;
+    const drawText = `drawtext=fontfile='${escapeFontPath(font)}':text='${escapeText(text)}':fontcolor=${colors.accent}:fontsize=${Math.round(h * 0.07)}:x=(w-text_w)/2:y=(h-text_h)/2-40`;
     const drawSub = subtitle
-      ? `,drawtext=fontfile=${fontRegular}:text='${escapeText(subtitle)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.025)}:x=(w-text_w)/2:y=(h/2)+40`
+      ? `,drawtext=fontfile='${escapeFontPath(fontRegular)}':text='${escapeText(subtitle)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.025)}:x=(w-text_w)/2:y=(h/2)+40`
       : "";
     const vf = `drawgrid=w=${Math.round(w / 12)}:h=${Math.round(h / 12)}:t=1:c=${colors.accent}@0.15,${drawText}${drawSub}`;
     await run("ffmpeg", [
+      "-v", "error",
       "-y", "-f", "lavfi", "-i", `color=c=${colors.bg}:s=${w}x${h}:d=${dur}:r=30`,
       "-vf", vf,
-      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", "-vsync", "cfr", "-t", String(dur), out
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30", "-fps_mode", "cfr", "-t", String(dur), out
     ]);
     return out;
   }
@@ -47,25 +56,27 @@ async function buildSegment({ type, srcPath, text, subtitle, duration, w, h, wor
       ? `,zoompan=z='min(zoom+0.0007,1.15)':d=${dur * 30}:s=${w}x${h}:fps=30`
       : "";
     const caption = text
-      ? `,drawtext=fontfile=${fontRegular}:text='${escapeText(text)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.03)}:box=1:boxcolor=${colors.bg}@0.55:boxborderw=14:x=40:y=h-th-50`
+      ? `,drawtext=fontfile='${escapeFontPath(fontRegular)}':text='${escapeText(text)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.03)}:box=1:boxcolor=${colors.bg}@0.55:boxborderw=14:x=40:y=h-th-50`
       : "";
     await run("ffmpeg", [
+      "-v", "error",
       "-y", "-loop", "1", "-i", srcPath,
       "-vf", `scale=${w * 1.2}:${h * 1.2}:force_original_aspect_ratio=increase,crop=${w * 1.2}:${h * 1.2}${zoom},crop=${w}:${h}${caption}`,
-      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", String(dur), "-r", "30", "-vsync", "cfr", out
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-t", String(dur), "-r", "30", "-fps_mode", "cfr", out
     ]);
     return out;
   }
 
   if (type === "video") {
     const caption = text
-      ? `,drawtext=fontfile=${fontRegular}:text='${escapeText(text)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.03)}:box=1:boxcolor=${colors.bg}@0.55:boxborderw=14:x=40:y=h-th-50`
+      ? `,drawtext=fontfile='${escapeFontPath(fontRegular)}':text='${escapeText(text)}':fontcolor=${colors.text}:fontsize=${Math.round(h * 0.03)}:box=1:boxcolor=${colors.bg}@0.55:boxborderw=14:x=40:y=h-th-50`
       : "";
     const trim = duration ? ["-t", String(duration)] : [];
     await run("ffmpeg", [
+      "-v", "error",
       "-y", "-i", srcPath,
       "-vf", `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}${caption},fps=30`,
-      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", "-r", "30", "-vsync", "cfr", ...trim, out
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", "-r", "30", "-fps_mode", "cfr", ...trim, out
     ]);
     return out;
   }
@@ -76,7 +87,7 @@ async function buildSegment({ type, srcPath, text, subtitle, duration, w, h, wor
 // Concatenate segments with crossfade transitions using xfade
 async function concatWithTransitions(segmentPaths, outPath, w, h) {
   if (segmentPaths.length === 1) {
-    await run("ffmpeg", ["-y", "-i", segmentPaths[0], "-c", "copy", outPath]);
+    await run("ffmpeg", ["-v", "error", "-y", "-i", segmentPaths[0], "-c", "copy", outPath]);
     return;
   }
 
@@ -102,6 +113,7 @@ async function concatWithTransitions(segmentPaths, outPath, w, h) {
   filter = filter.replace(/;$/, "");
 
   await run("ffmpeg", [
+    "-v", "error",
     "-y", ...inputs,
     "-filter_complex", filter,
     "-map", `[vout]`,

@@ -5,3 +5,5 @@ uploads/*
 output/*
 !output/.gitkeep
 *.log
+ffmpeg/ffmpeg.zip
+ffmpeg/bin/
