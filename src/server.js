@@ -6,10 +6,10 @@ const path = require("path");
 const fs = require("fs");
 const { execSync } = require("child_process");
 const { v4: uuidv4 } = require("uuid");
-const { renderProject } = require("./renderer");
-const { generateAIClip } = require("./ai-providers");
+const { renderProject, FILTERS, TRANSITIONS } = require("./renderer");
+const { generateAIClip, getTemplates } = require("./ai-providers");
 
-// --- Detect ffmpeg path (local ./ffmpeg/bin or system) ---
+// --- Detect ffmpeg path ---
 function findFFmpeg() {
   const localBin = path.join(__dirname, "..", "ffmpeg", "bin");
   if (fs.existsSync(path.join(localBin, "ffmpeg.exe"))) return localBin;
@@ -22,7 +22,7 @@ if (FFMPEG_PATH) process.env.PATH = FFMPEG_PATH + path.delimiter + (process.env.
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "10mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
@@ -32,11 +32,10 @@ fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 const upload = multer({ dest: UPLOAD_DIR, limits: { fileSize: 300 * 1024 * 1024 } });
 
-// in-memory job store (swap for redis/db in production)
+// In-memory job store
 const jobs = new Map();
 
-// ---- Render a project from uploaded files + a JSON "timeline" ----
-// timeline: [{ type: 'image'|'video'|'ai', text, duration, fileIndex? , aiPrompt? }]
+// ─── POST /api/render ───────────────────────────────────────────────────
 app.post("/api/render", upload.any(), async (req, res) => {
   try {
     const jobId = uuidv4();
@@ -44,7 +43,7 @@ app.post("/api/render", upload.any(), async (req, res) => {
     const options = JSON.parse(req.body.options || "{}");
     const files = req.files || [];
 
-    jobs.set(jobId, { status: "processing", progress: 0 });
+    jobs.set(jobId, { status: "processing", progress: 0, step: "Starting..." });
     res.json({ jobId });
 
     const workDir = path.join(OUTPUT_DIR, jobId);
@@ -53,25 +52,44 @@ app.post("/api/render", upload.any(), async (req, res) => {
     const items = [];
     for (const step of timeline) {
       if (step.type === "ai") {
-        // Pluggable AI generation hook — see src/ai-providers.js
-        const aiClipPath = await generateAIClip({ prompt: step.aiPrompt, workDir });
-        items.push({ type: "video", path: aiClipPath, text: step.text, duration: step.duration });
+        const aiClipPath = await generateAIClip({
+          prompt: step.aiPrompt,
+          workDir,
+          templateKey: step.aiTemplate || "security",
+          duration: step.duration || 3,
+        });
+        items.push({
+          type: "video", path: aiClipPath,
+          text: step.text, subtitle: step.subtitle,
+          duration: step.duration,
+          effects: step.effects || {},
+        });
       } else {
         const file = files[step.fileIndex];
         if (!file) continue;
-        items.push({ type: step.type, path: file.path, text: step.text, duration: step.duration });
+        items.push({
+          type: step.type, path: file.path,
+          text: step.text, subtitle: step.subtitle,
+          duration: step.duration,
+          effects: step.effects || {},
+        });
       }
     }
 
-    await renderProject({ items, options, workDir, outPath });
+    await renderProject({
+      items, options, workDir, outPath,
+      progress: (pct, msg) => {
+        const job = jobs.get(jobId);
+        if (job) { job.progress = pct; job.step = msg; }
+      }
+    });
 
     jobs.set(jobId, { status: "done", progress: 100, file: `${jobId}.mp4` });
 
-    // cleanup uploaded originals
+    // Cleanup uploaded originals
     for (const f of files) {
       try { fs.unlinkSync(f.path); } catch (_) {}
     }
-    try { fs.rmdirSync(workDir); } catch (_) {}
   } catch (err) {
     console.error(err);
     const jobId = [...jobs.keys()].pop();
@@ -79,23 +97,25 @@ app.post("/api/render", upload.any(), async (req, res) => {
   }
 });
 
+// ─── GET /api/status/:jobId ─────────────────────────────────────────────
 app.get("/api/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: "not found" });
   res.json(job);
 });
 
+// ─── GET /api/download/:jobId ───────────────────────────────────────────
 app.get("/api/download/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job || job.status !== "done") return res.status(404).json({ error: "not ready" });
   res.download(path.join(OUTPUT_DIR, job.file));
 });
 
-// ---- Embeddable player page: <iframe src="/embed/:jobId"> works on ANY external site ----
+// ─── GET /embed/:jobId ──────────────────────────────────────────────────
 app.get("/embed/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job || job.status !== "done") {
-    return res.send(`<html><body style="background:#0a0e17;color:#00e5ff;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">در حال آماده‌سازی ویدیو…</body></html>`);
+    return res.send(`<html><body style="background:#0a0e17;color:#00e5ff;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">Loading…</body></html>`);
   }
   res.send(`<!DOCTYPE html>
 <html><head><style>
@@ -109,7 +129,22 @@ app.get("/embed/:jobId", (req, res) => {
 
 app.use("/output", express.static(OUTPUT_DIR));
 
-// Health check
+// ─── GET /api/templates ─────────────────────────────────────────────────
+app.get("/api/templates", (req, res) => {
+  res.json(getTemplates());
+});
+
+// ─── GET /api/filters ───────────────────────────────────────────────────
+app.get("/api/filters", (req, res) => {
+  res.json(Object.keys(FILTERS).map(k => ({ id: k, name: k })));
+});
+
+// ─── GET /api/transitions ───────────────────────────────────────────────
+app.get("/api/transitions", (req, res) => {
+  res.json(Object.keys(TRANSITIONS).map(k => ({ id: k, name: k })));
+});
+
+// ─── GET /api/health ────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", ffmpeg: !!FFMPEG_PATH, jobs: jobs.size });
 });
@@ -117,11 +152,14 @@ app.get("/api/health", (req, res) => {
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 app.listen(PORT, () => {
   console.log("");
-  console.log("╔══════════════════════════════════════════╗");
-  console.log("║        🎬 VIDEO AGENT RUNNING            ║");
-  console.log("╚══════════════════════════════════════════╝");
+  console.log("╔══════════════════════════════════════════════╗");
+  console.log("║     🎬 VIDEO AGENT — PROFESSIONAL EDITION    ║");
+  console.log("╚══════════════════════════════════════════════╝");
   console.log("");
   console.log(`  🌐 Open: http://localhost:${PORT}`);
   console.log(`  🔧 ffmpeg: ${FFMPEG_PATH ? "✅ local (./ffmpeg/bin)" : "✅ system"}`);
+  console.log(`  🎨 Filters: ${Object.keys(FILTERS).length}`);
+  console.log(`  🔀 Transitions: ${Object.keys(TRANSITIONS).length}`);
+  console.log(`  🤖 AI Templates: ${getTemplates().length}`);
   console.log("");
 });
